@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('snipe', {
     return () => ipcRenderer.removeListener('snipe:upi-status', handler);
   },
   stopLane: (laneId) => ipcRenderer.invoke('lanes:stop', laneId),
+  pushAddressToAll: (addressData) => ipcRenderer.invoke('address:push-all', addressData),
   testTelegram: () => ipcRenderer.invoke('telegram:test'),
   onMenuAction: (callback) => {
     const handler = (_, action) => callback(action);

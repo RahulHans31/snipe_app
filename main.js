@@ -1159,6 +1159,37 @@ ipcMain.handle('targets:close', () => {
   emit({ kind: 'warn', text: 'All target and payment lanes stopped' });
   return true;
 });
+ipcMain.handle('address:push-all', async (_, addressData) => {
+  const state = readState();
+  const accounts = state.accounts || [];
+  if (!accounts.length) return { ok: false, error: 'No saved accounts.' };
+  const engine = await loadCheckoutEngine();
+  const results = [];
+  for (const account of accounts) {
+    const ctx = engine.createCheckoutContext(account);
+    checkoutContexts.set(ctx.id, { cookies: [...(account.cookies || [])], accountId: account.id });
+    try {
+      await engine.addAddress(ctx, addressData);
+      const updated = checkoutContexts.get(ctx.id)?.cookies;
+      if (updated?.length) {
+        const liveState = readState();
+        const idx = liveState.accounts.findIndex((a) => a.id === account.id);
+        if (idx >= 0) {
+          liveState.accounts[idx] = { ...liveState.accounts[idx], cookies: [...updated] };
+          writeStateDebounced(liveState);
+        }
+      }
+      results.push({ accountName: account.name, ok: true });
+      emit({ kind: 'ok', text: `Address added · ${account.name}` });
+    } catch (err) {
+      results.push({ accountName: account.name, ok: false, error: err.message });
+      emit({ kind: 'err', text: `Address failed · ${account.name} · ${err.message}` });
+    } finally {
+      checkoutContexts.delete(ctx.id);
+    }
+  }
+  return { ok: true, results };
+});
 ipcMain.handle('telegram:test', async () => telegramSend('Snipe Desktop · Telegram test alert · ' + new Date().toLocaleString()));
 ipcMain.handle('lanes:stop', (_, jobId) => {
   // Per-lane cancel of an in-flight checkout requires engine-level abort

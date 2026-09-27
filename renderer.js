@@ -115,6 +115,24 @@ $('verify-otp').onclick=async()=>{const otp=$('login-otp').value.trim();if(!logi
 $('login-phone').onkeydown=e=>{if(e.key==='Enter')$('send-otp').click()};
 $('login-otp').onkeydown=e=>{if(e.key==='Enter')$('verify-otp').click()};
 $('account-list').onclick=async e=>{if(e.target.classList.contains('account-remove')){state.accounts=state.accounts.filter(a=>a.id!==e.target.dataset.id);await window.snipe.saveState(state);render();}};
+$('push-address-btn').onclick=()=>{$('address-form').hidden=false;$('addr-name').focus();};
+$('addr-cancel').onclick=()=>{$('address-form').hidden=true;$('addr-status').textContent='';};
+$('addr-submit').onclick=async()=>{
+  const addressData={name:$('addr-name').value.trim(),phone:$('addr-phone').value.trim(),addressLine1:$('addr-line1').value.trim(),addressLine2:$('addr-line2').value.trim(),city:$('addr-city').value.trim(),state:$('addr-state').value.trim(),pincode:$('addr-pincode').value.trim(),locationTypeTag:$('addr-type').value};
+  if(!addressData.name||!addressData.phone||!addressData.addressLine1||!addressData.city||!addressData.state||!addressData.pincode){$('addr-status').textContent='Fill all required fields.';return;}
+  if(!/^\d{10}$/.test(addressData.phone)){$('addr-status').textContent='Phone must be 10 digits (no +91).';return;}
+  if(!/^\d{6}$/.test(addressData.pincode)){$('addr-status').textContent='Pincode must be 6 digits.';return;}
+  if(!state.accounts.length){$('addr-status').textContent='No saved accounts.';return;}
+  $('addr-submit').disabled=true;
+  $('addr-status').textContent=`Pushing to ${state.accounts.length} account${state.accounts.length===1?'':'s'}…`;
+  const result=await window.snipe.pushAddressToAll(addressData);
+  $('addr-submit').disabled=false;
+  if(!result?.ok){$('addr-status').textContent=result?.error||'Failed.';return;}
+  const ok=result.results.filter(r=>r.ok).length;
+  const fail=result.results.filter(r=>!r.ok).length;
+  $('addr-status').textContent=`Done: ${ok} added${fail?`, ${fail} failed`:'.'}`;
+  toast(`Address pushed to ${ok}/${result.results.length} account${result.results.length===1?'':'s'}`);
+};
 $('import-data').onclick=async()=>{const result=await window.snipe.importExtensionData();if(result?.ok){state=result.state;state.settings={...defaults.settings,...state.settings};render();toast('Extension data imported');}else if(result?.error)$('error').textContent=result.error;};
 $('export-data').onclick=async()=>{const result=await window.snipe.exportDesktopData();if(result?.ok)toast(`Backup saved: ${result.path}`);else if(result?.error)$('error').textContent=result.error;};
 document.querySelectorAll('.log-filters button').forEach(btn=>{btn.addEventListener('click',()=>{logFilter=btn.dataset.filter;document.querySelectorAll('.log-filters button').forEach(b=>b.classList.toggle('active',b===btn));renderLog();});});
