@@ -107,6 +107,74 @@ $('save-account').onclick=async()=>{const name=$('account-nickname').value.trim(
 let loginRequestId=null;
 function loginStatus(text,kind='info'){$('login-status').textContent=text||'';$('login-status').dataset.kind=kind;}
 function resetLogin(){window.snipe.cancelLogin().catch(()=>{});$('login-form').hidden=true;$('login-nickname').value='';$('login-phone').value='';$('login-otp').value='';$('otp-step').hidden=true;loginRequestId=null;loginStatus('');}
+// ── Batch OTP login ──────────────────────────────────────────────────────────
+let batchItems=[];
+function parseBatchIdentifiers(raw){
+  return raw.split('\n').map(line=>line.trim()).filter(Boolean).map((line,i)=>{
+    const colonIdx=line.indexOf(':');
+    let nickname,identifier;
+    if(colonIdx>0&&colonIdx<line.length-1){nickname=line.slice(0,colonIdx).trim();identifier=line.slice(colonIdx+1).trim();}
+    else{nickname=`Account ${i+1}`;identifier=line;}
+    return{id:crypto.randomUUID(),nickname,identifier,requestId:null,status:'pending',error:null};
+  });
+}
+function renderBatchGrid(){
+  $('batch-grid').innerHTML=batchItems.map(item=>`
+    <div class="batch-row" data-id="${item.id}">
+      <span class="identifier" title="${escapeHtml(item.identifier)}">${escapeHtml(item.identifier)}</span>
+      <input class="batch-nickname" data-id="${item.id}" value="${escapeHtml(item.nickname)}" placeholder="Nickname" maxlength="24">
+      <input class="batch-otp" data-id="${item.id}" inputmode="numeric" maxlength="8" placeholder="${item.status==='ok'?'✓ saved':item.requestId?'Enter OTP':'—'}" ${!item.requestId||item.status==='ok'?'disabled':''}>
+      <span class="batch-row-status ${item.status}">${item.status==='ok'?'SAVED':item.status==='err'?escapeHtml(item.error||'ERR'):'OTP SENT'}</span>
+    </div>`).join('');
+}
+function resetBatch(){batchItems=[];$('batch-login-form').hidden=true;$('batch-step-1').hidden=false;$('batch-step-2').hidden=true;$('batch-identifiers').value='';$('batch-status').textContent='';$('batch-verify-status').textContent='';}
+$('batch-login-btn').onclick=()=>{resetBatch();$('batch-login-form').hidden=false;$('batch-identifiers').focus();};
+$('batch-cancel-btn').onclick=resetBatch;
+$('batch-back-btn').onclick=()=>{$('batch-step-2').hidden=true;$('batch-step-1').hidden=false;};
+$('batch-send-btn').onclick=async()=>{
+  const raw=$('batch-identifiers').value.trim();
+  if(!raw){$('batch-status').textContent='Paste at least one phone or email.';return;}
+  batchItems=parseBatchIdentifiers(raw);
+  if(!batchItems.length){$('batch-status').textContent='No valid identifiers found.';return;}
+  $('batch-send-btn').disabled=true;
+  $('batch-status').textContent=`Sending ${batchItems.length} OTP${batchItems.length===1?'':'s'}…`;
+  const results=await window.snipe.batchSendOtp(batchItems.map(i=>({id:i.id,identifier:i.identifier,nickname:i.nickname})));
+  $('batch-send-btn').disabled=false;
+  results.forEach(r=>{const item=batchItems.find(i=>i.id===r.id);if(!item)return;if(r.ok){item.requestId=r.requestId;item.status='pending';}else{item.status='err';item.error=r.error||'failed';}});
+  const sent=results.filter(r=>r.ok).length;
+  const failed=results.filter(r=>!r.ok).length;
+  $('batch-summary').textContent=`${sent} OTP${sent===1?'':'s'} sent${failed?` · ${failed} failed`:''} · fill in OTPs as they arrive then click VERIFY ALL`;
+  $('batch-status').textContent='';
+  $('batch-step-1').hidden=true;$('batch-step-2').hidden=false;
+  renderBatchGrid();
+};
+$('batch-verify-btn').onclick=async()=>{
+  const pending=batchItems.filter(i=>i.requestId&&i.status==='pending');
+  if(!pending.length){$('batch-verify-status').textContent='No pending accounts to verify.';return;}
+  const otpInputs=document.querySelectorAll('.batch-otp');
+  const verifications=[];
+  otpInputs.forEach(input=>{const id=input.dataset.id;const item=batchItems.find(i=>i.id===id);if(!item||item.status==='ok')return;const otp=input.value.trim();if(otp)verifications.push({id,otp});});
+  if(!verifications.length){$('batch-verify-status').textContent='Enter at least one OTP first.';return;}
+  $('batch-verify-btn').disabled=true;
+  $('batch-verify-status').textContent=`Verifying ${verifications.length} OTP${verifications.length===1?'':'s'}…`;
+  const results=await window.snipe.batchVerifyOtp(verifications);
+  $('batch-verify-btn').disabled=false;
+  let saved=0;
+  for(const r of results){
+    const item=batchItems.find(i=>i.id===r.id);if(!item)continue;
+    if(r.ok){
+      const nicknameEl=document.querySelector(`.batch-nickname[data-id="${r.id}"]`);
+      const nickname=(nicknameEl?.value||'').trim()||item.nickname||`Account ${state.accounts.length+1}`;
+      state.accounts.push({id:`acct_${Date.now()}_${Math.random().toString(36).slice(2)}`,name:nickname,source:'batch-otp',cookies:r.cookies,capturedAt:Date.now()});
+      item.status='ok';saved++;
+    }else{item.status='err';item.error=r.error||'failed';}
+  }
+  if(saved)await window.snipe.saveState(state);
+  renderBatchGrid();
+  $('batch-verify-status').textContent=`${saved} account${saved===1?'':'s'} saved.${results.filter(r=>!r.ok).length?` ${results.filter(r=>!r.ok).length} failed — fix OTP and retry.`:''}`;
+  if(saved)render();
+  if(batchItems.every(i=>i.status==='ok'))setTimeout(resetBatch,1500);
+};
 $('login-account').onclick=()=>{resetLogin();$('login-form').hidden=false;$('login-nickname').focus();};
 $('cancel-login').onclick=resetLogin;
 $('send-otp').onclick=async()=>{const phone=$('login-phone').value.trim();if(!phone){loginStatus('Enter a mobile or email first.','err');return}$('send-otp').disabled=true;loginStatus('Sending OTP…');const result=await window.snipe.sendLoginOtp(phone);$('send-otp').disabled=false;if(!result?.ok){loginStatus(result?.error||'Send OTP failed.','err');return}loginRequestId=result.requestId;$('otp-step').hidden=false;loginStatus(`OTP sent${result.emailMask?` to ${result.emailMask}`:result.smsServers?' by SMS':''}.`,'ok');$('login-otp').focus();};

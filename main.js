@@ -404,6 +404,31 @@ async function persistLoginResponseCookies(response) {
   }
 }
 
+// ── Batch login ────────────────────────────────────────────────────────────
+// Each pending batch login gets its own isolated cookie jar so accounts don't
+// share browser session state. Map key is the client-generated item id.
+const batchLoginCtxs = new Map();
+
+async function loginFetchCtx(ctx, pathname, body, depth = 0) {
+  const cookieStr = ctx.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+  const url = `https://${ctx.dc}.rome.api.flipkart.com${pathname}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { ...LOGIN_HEADERS, Cookie: cookieStr },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT.login),
+  });
+  mergeSetCookies(ctx, responseSetCookies(response), url);
+  let data = null;
+  try { data = await response.json(); } catch {}
+  if (response.status === 406 && data?.ERROR_MESSAGE === 'DC Change' && depth < 3) {
+    const nextDC = data?.META_INFO?.dcInfo?.id || data?.RESPONSE?.id;
+    if (nextDC && nextDC !== ctx.dc) { ctx.dc = nextDC; return loginFetchCtx(ctx, pathname, body, depth + 1); }
+  }
+  return { response, data };
+}
+
 async function loginFetch(pathname, body, depth = 0) {
   const cookieHeader = (await browserCookies()).map((cookie) => `${cookie.name}=${cookie.value}`).join('; ');
   const dc = loginSession?.dc ?? 1;
@@ -1080,6 +1105,64 @@ ipcMain.handle('login:verify-otp', async (_, payload) => {
 ipcMain.handle('login:cancel', async () => {
   await endLoginSession({ restore: true });
   return { ok: true };
+});
+ipcMain.handle('login:batch-send', async (_, items) => {
+  // items: [{ id, identifier, nickname }]
+  batchLoginCtxs.clear();
+  const results = [];
+  for (const item of items) {
+    const phone = normalizeLoginId(item.identifier);
+    if (!phone) { results.push({ id: item.id, ok: false, error: 'Invalid identifier' }); continue; }
+    const deviceId = Array.from({ length: 25 }, () => crypto.randomInt(0, 10)).join('');
+    const ctx = {
+      cookies: [
+        { name: 'T', value: deviceId, domain: '.flipkart.com', path: '/' },
+        { name: 'Network-Type', value: '4g', domain: '.flipkart.com', path: '/' },
+      ],
+      dc: 1, identifier: phone, nickname: item.nickname,
+    };
+    try {
+      const { response, data } = await loginFetchCtx(ctx, '/api/7/user/otp/generate', { loginId: phone });
+      if (response.status !== 200) {
+        const code = data?.errorCode || data?.RESPONSE?.errorCode;
+        if (code === 'LOGIN_1004') throw new Error('Too many OTP requests — wait before retrying.');
+        throw new Error(`Send OTP failed (${response.status}) ${data?.ERROR_MESSAGE || ''}`.trim());
+      }
+      const requestId = data?.RESPONSE?.requestId || data?.requestId || data?.['REQUEST-ID'];
+      if (!requestId) throw new Error('Flipkart returned no requestId');
+      ctx.requestId = String(requestId);
+      batchLoginCtxs.set(item.id, ctx);
+      results.push({ id: item.id, ok: true, requestId: ctx.requestId, emailMask: data?.RESPONSE?.emailMask });
+    } catch (err) {
+      results.push({ id: item.id, ok: false, error: err.message });
+    }
+    await delay(350);
+  }
+  return results;
+});
+ipcMain.handle('login:batch-verify', async (_, verifications) => {
+  // verifications: [{ id, otp }]
+  const results = [];
+  for (const item of verifications) {
+    const ctx = batchLoginCtxs.get(item.id);
+    if (!ctx) { results.push({ id: item.id, ok: false, error: 'Session expired — resend OTP' }); continue; }
+    try {
+      const { response, data } = await loginFetchCtx(ctx, '/api/1/user/login/otp', {
+        userId: ctx.identifier, requestId: ctx.requestId, otp: item.otp,
+      });
+      if (![200, 302].includes(response.status)) throw new Error(`Verify OTP failed (${response.status}) ${data?.ERROR_MESSAGE || ''}`.trim());
+      const errorMessage = data?.RESPONSE?.errorMessage || data?.RESPONSE?.error;
+      if (errorMessage) throw new Error(String(errorMessage));
+      await delay(250);
+      const atCookie = ctx.cookies.find((c) => c.name === 'at' && c.value?.length >= 10);
+      if (!atCookie) throw new Error('OTP verified but no session token was created');
+      batchLoginCtxs.delete(item.id);
+      results.push({ id: item.id, ok: true, cookies: ctx.cookies, cookieCount: ctx.cookies.length });
+    } catch (err) {
+      results.push({ id: item.id, ok: false, error: err.message });
+    }
+  }
+  return results;
 });
 ipcMain.handle('data:import-extension', async () => {
   const picked = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'JSON export', extensions: ['json'] }] });
