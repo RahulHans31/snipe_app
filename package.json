@@ -1,0 +1,33 @@
+{
+  "name": "snipe-desktop",
+  "version": "0.1.2",
+  "private": true,
+  "author": "FlashBuy",
+  "description": "Desktop control center for Snipe flash checkout workflows.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^37.1.0",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.flashbuy.snipe",
+    "productName": "Snipe Desktop",
+    "files": ["main.js", "preload.js", "index.html", "renderer.js", "styles.css", "upi.html", "README.md", "engine/**/*", "icon.ico", "icon.png"],
+    "icon": "icon.ico",
+    "win": { "target": "nsis", "icon": "icon.ico" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Snipe Desktop"
+    },
+    "artifactName": "Snipe-Desktop-Setup-${version}.${ext}"
+  }
+}
