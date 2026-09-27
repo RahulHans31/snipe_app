@@ -18,9 +18,24 @@
   "build": {
     "appId": "com.flashbuy.snipe",
     "productName": "Snipe Desktop",
-    "files": ["main.js", "preload.js", "index.html", "renderer.js", "styles.css", "upi.html", "README.md", "engine/**/*", "icon.ico", "icon.png"],
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "upi.html",
+      "README.md",
+      "engine/**/*",
+      "icon.ico",
+      "icon.png",
+      "node_modules/**/*"
+    ],
     "icon": "icon.ico",
-    "win": { "target": "nsis", "icon": "icon.ico" },
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -29,5 +44,8 @@
       "shortcutName": "Snipe Desktop"
     },
     "artifactName": "Snipe-Desktop-Setup-${version}.${ext}"
+  },
+  "dependencies": {
+    "imapflow": "^2.0.7"
   }
 }

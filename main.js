@@ -59,7 +59,7 @@ const stateFile = () => path.join(app.getPath('userData'), 'snipe-state.json');
 
 const defaults = {
   targets: [],
-  settings: { pincode: '', paymentMode: 'off', quantity: 1, pollInterval: 3, parallelism: 2, bank: '', vpa: '', addressId: '', addressPincode: '', conditionalBuy: false, supercoins: false, gst: false, telegramToken: '', telegramChatId: '', notifyPlaced: true, notifyFailed: true, sound: false },
+  settings: { pincode: '', paymentMode: 'off', quantity: 1, pollInterval: 3, parallelism: 2, bank: '', vpa: '', addressId: '', addressPincode: '', conditionalBuy: false, supercoins: false, gst: false, telegramToken: '', telegramChatId: '', notifyPlaced: true, notifyFailed: true, sound: false, imapHost: 'imap.hostinger.com', imapPort: 993, imapUser: '', imapPassword: '' },
   accounts: [],
   cards: [],
   selectedCardId: null,
@@ -113,6 +113,9 @@ function serializeStateForDisk(state) {
   if (clone.settings?.telegramToken) {
     clone.settings.telegramToken = encryptSensitive(clone.settings.telegramToken);
   }
+  if (clone.settings?.imapPassword) {
+    clone.settings.imapPassword = encryptSensitive(clone.settings.imapPassword);
+  }
   if (Array.isArray(clone.accounts)) {
     for (const account of clone.accounts) {
       if (Array.isArray(account.cookies) && account.cookies.length) {
@@ -136,6 +139,11 @@ function deserializeStateFromDisk(state) {
   if (tokenField && typeof tokenField === 'object' && tokenField[ENC_MARK]) {
     const dec = decryptSensitive(tokenField, 'string');
     state.settings.telegramToken = dec == null ? '' : dec;
+  }
+  const imapPwField = state?.settings?.imapPassword;
+  if (imapPwField && typeof imapPwField === 'object' && imapPwField[ENC_MARK]) {
+    const dec = decryptSensitive(imapPwField, 'string');
+    state.settings.imapPassword = dec == null ? '' : dec;
   }
   if (Array.isArray(state?.accounts)) {
     for (const account of state.accounts) {
@@ -1272,6 +1280,58 @@ ipcMain.handle('address:push-all', async (_, addressData) => {
     }
   }
   return { ok: true, results };
+});
+ipcMain.handle('imap:test', async () => {
+  const { ImapFlow } = require('imapflow');
+  const s = readState().settings || {};
+  if (!s.imapHost || !s.imapUser || !s.imapPassword)
+    return { ok: false, error: 'Fill host, user, and password first.' };
+  const client = new ImapFlow({
+    host: s.imapHost, port: Number(s.imapPort) || 993, secure: true,
+    auth: { user: s.imapUser, pass: s.imapPassword },
+    logger: false, disableAutoIdle: true,
+  });
+  try { await client.connect(); await client.logout(); return { ok: true }; }
+  catch (err) { try { await client.logout(); } catch {} return { ok: false, error: err.message }; }
+});
+ipcMain.handle('imap:fetch-otps', async (_, identifiers) => {
+  const { ImapFlow } = require('imapflow');
+  const s = readState().settings || {};
+  if (!s.imapHost || !s.imapUser || !s.imapPassword)
+    return { ok: false, error: 'IMAP not configured.' };
+  const idSet = new Set(identifiers.map((id) => id.toLowerCase()));
+  const client = new ImapFlow({
+    host: s.imapHost, port: Number(s.imapPort) || 993, secure: true,
+    auth: { user: s.imapUser, pass: s.imapPassword },
+    logger: false, disableAutoIdle: true,
+  });
+  const otps = {};
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      const since = new Date(Date.now() - 15 * 60 * 1000);
+      const uids = await client.search({ since }, { uid: true });
+      if (uids.length) {
+        const range = uids.slice(-60);
+        for await (const msg of client.fetch(range, { envelope: true, source: true }, { uid: true })) {
+          const from = (msg.envelope?.from?.[0]?.address || '').toLowerCase();
+          const subject = (msg.envelope?.subject || '').toLowerCase();
+          if (!from.includes('flipkart') && !subject.includes('otp') && !subject.includes('one time')) continue;
+          const toAddr = (msg.envelope?.to?.[0]?.address || '').toLowerCase();
+          if (!idSet.has(toAddr) || otps[toAddr]) continue;
+          const raw = Buffer.isBuffer(msg.source) ? msg.source.toString('utf-8') : String(msg.source || '');
+          const match = raw.match(/\b([1-9][0-9]{5})\b/);
+          if (match) otps[toAddr] = match[1];
+        }
+      }
+    } finally { lock.release(); }
+    await client.logout();
+    return { ok: true, otps };
+  } catch (err) {
+    try { await client.logout(); } catch {}
+    return { ok: false, error: err.message };
+  }
 });
 ipcMain.handle('telegram:test', async () => telegramSend('Snipe Desktop · Telegram test alert · ' + new Date().toLocaleString()));
 ipcMain.handle('lanes:stop', (_, jobId) => {

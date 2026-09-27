@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('snipe', {
   pushAddressToAll: (addressData) => ipcRenderer.invoke('address:push-all', addressData),
   batchSendOtp: (items) => ipcRenderer.invoke('login:batch-send', items),
   batchVerifyOtp: (verifications) => ipcRenderer.invoke('login:batch-verify', verifications),
+  imapTest: () => ipcRenderer.invoke('imap:test'),
+  imapFetchOtps: (identifiers) => ipcRenderer.invoke('imap:fetch-otps', identifiers),
   testTelegram: () => ipcRenderer.invoke('telegram:test'),
   onMenuAction: (callback) => {
     const handler = (_, action) => callback(action);

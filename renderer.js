@@ -127,8 +127,30 @@ function renderBatchGrid(){
       <span class="batch-row-status ${item.status}">${item.status==='ok'?'SAVED':item.status==='err'?escapeHtml(item.error||'ERR'):'OTP SENT'}</span>
     </div>`).join('');
 }
-function resetBatch(){batchItems=[];$('batch-login-form').hidden=true;$('batch-step-1').hidden=false;$('batch-step-2').hidden=true;$('batch-identifiers').value='';$('batch-status').textContent='';$('batch-verify-status').textContent='';}
-$('batch-login-btn').onclick=()=>{resetBatch();$('batch-login-form').hidden=false;$('batch-identifiers').focus();};
+let _imapPollTimer=null;
+function stopImapPoll(){if(_imapPollTimer){clearInterval(_imapPollTimer);_imapPollTimer=null;}if($('imap-poll-bar'))$('imap-poll-bar').hidden=true;}
+async function doImapFetch(){
+  const emailIds=batchItems.filter(i=>i.status==='pending'&&i.requestId&&/^[^@]+@[^@]+\.[^@]+$/.test(i.identifier)).map(i=>i.identifier.toLowerCase());
+  if(!emailIds.length){stopImapPoll();return;}
+  if($('imap-poll-bar')){$('imap-poll-bar').hidden=false;$('imap-poll-bar').textContent='Polling inbox…';}
+  const r=await window.snipe.imapFetchOtps(emailIds);
+  if(!r?.ok){if($('imap-poll-bar'))$('imap-poll-bar').textContent=`Inbox error: ${r?.error||'unknown'}`;return;}
+  let filled=0;
+  for(const[email,otp] of Object.entries(r.otps||{})){
+    const item=batchItems.find(i=>i.identifier.toLowerCase()===email);
+    const input=item?document.querySelector(`.batch-otp[data-id="${item.id}"]`):null;
+    if(input&&!input.value){input.value=otp;input.style.borderColor='var(--ok)';filled++;}
+  }
+  const pending=batchItems.filter(i=>i.status==='pending'&&i.requestId).length;
+  if($('imap-poll-bar'))$('imap-poll-bar').textContent=`Inbox polled · ${filled} auto-filled · ${pending} pending`;
+  if(!pending)stopImapPoll();
+}
+function startImapPoll(){stopImapPoll();doImapFetch();_imapPollTimer=setInterval(doImapFetch,6000);setTimeout(stopImapPoll,5*60*1000);}
+function loadImapFields(){if($('imap-host'))$('imap-host').value=state.settings.imapHost||'imap.hostinger.com';if($('imap-port'))$('imap-port').value=state.settings.imapPort||993;if($('imap-user'))$('imap-user').value=state.settings.imapUser||'';if($('imap-password'))$('imap-password').value=state.settings.imapPassword?'••••••••':'';}
+$('imap-save-btn')?.addEventListener('click',async()=>{state.settings.imapHost=$('imap-host').value.trim();state.settings.imapPort=Number($('imap-port').value)||993;state.settings.imapUser=$('imap-user').value.trim();const pw=$('imap-password').value;if(pw&&pw!=='••••••••')state.settings.imapPassword=pw;await window.snipe.saveState(state);$('imap-config-status').textContent='Saved.';$('imap-config-status').style.color='var(--ok)';setTimeout(()=>{$('imap-config-status').textContent='';$('imap-config-status').style.color='';},2000);});
+$('imap-test-btn')?.addEventListener('click',async()=>{state.settings.imapHost=$('imap-host').value.trim();state.settings.imapPort=Number($('imap-port').value)||993;state.settings.imapUser=$('imap-user').value.trim();const pw=$('imap-password').value;if(pw&&pw!=='••••••••')state.settings.imapPassword=pw;$('imap-test-btn').disabled=true;$('imap-config-status').textContent='Connecting…';$('imap-config-status').style.color='';const r=await window.snipe.imapTest();$('imap-test-btn').disabled=false;$('imap-config-status').textContent=r.ok?'Connected ✓':r.error||'Failed';$('imap-config-status').style.color=r.ok?'var(--ok)':'var(--err)';});
+function resetBatch(){stopImapPoll();batchItems=[];$('batch-login-form').hidden=true;$('batch-step-1').hidden=false;$('batch-step-2').hidden=true;$('batch-identifiers').value='';$('batch-status').textContent='';$('batch-verify-status').textContent='';}
+$('batch-login-btn').onclick=()=>{resetBatch();loadImapFields();$('batch-login-form').hidden=false;$('batch-identifiers').focus();};
 $('batch-cancel-btn').onclick=resetBatch;
 $('batch-back-btn').onclick=()=>{$('batch-step-2').hidden=true;$('batch-step-1').hidden=false;};
 $('batch-send-btn').onclick=async()=>{
@@ -147,6 +169,7 @@ $('batch-send-btn').onclick=async()=>{
   $('batch-status').textContent='';
   $('batch-step-1').hidden=true;$('batch-step-2').hidden=false;
   renderBatchGrid();
+  if(state.settings.imapHost&&state.settings.imapUser&&state.settings.imapPassword)startImapPoll();
 };
 $('batch-verify-btn').onclick=async()=>{
   const pending=batchItems.filter(i=>i.requestId&&i.status==='pending');
