@@ -1097,7 +1097,9 @@ ipcMain.handle('data:import-extension', async () => {
     const state = readState();
     const targets = [...state.targets, ...imported.targets.map((t) => ({ ...t, id: t.id || `target_${t.productId || `${Date.now()}_${Math.random()}`}` }))]
       .filter((t, i, all) => all.findIndex((x) => (x.productId || x.id) === (t.productId || t.id)) === i);
-    const merged = { ...state, ...imported, targets, accounts: [...state.accounts, ...imported.accounts] };
+    const seenAccountIds = new Set(state.accounts.map((a) => a.id).filter(Boolean));
+    const newAccounts = imported.accounts.filter((a) => !seenAccountIds.has(a.id));
+    const merged = { ...state, ...imported, targets, accounts: [...state.accounts, ...newAccounts] };
     writeState(merged);
     return { ok: true, state: merged };
   } catch (error) { return { ok: false, error: error.message }; }
@@ -1115,7 +1117,7 @@ ipcMain.handle('session:open', () => {
   sessionWindow.webContents.on('will-navigate', (event, url) => {
     if (url === 'snipe://close') { event.preventDefault(); sessionWindow.close(); }
   });
-  sessionWindow.webContents.on('did-finish-load', () => {
+  const injectSessionToolbar = () => {
     sessionWindow.webContents.insertCSS(`
       #snipe-session-toolbar{position:fixed;z-index:2147483647;top:10px;left:10px;display:flex;gap:6px;padding:6px;background:#14141aee;border:1px solid #f59e0b;color:#e5e7eb;font:12px ui-monospace,Consolas,monospace;border-radius:4px}
       #snipe-session-toolbar button{background:#0a0a0b;color:#f59e0b;border:1px solid #51401d;padding:6px 10px;cursor:pointer}
@@ -1127,7 +1129,9 @@ ipcMain.handle('session:open', () => {
       bar.innerHTML='<button onclick="history.back()">← BACK</button><button onclick="history.forward()">FORWARD →</button><button onclick="location.href=\'snipe://close\'">CLOSE SESSION</button>';
       document.body.appendChild(bar);
     })()`);
-  });
+  };
+  sessionWindow.webContents.on('did-finish-load', injectSessionToolbar);
+  sessionWindow.webContents.on('did-navigate-in-page', injectSessionToolbar);
   sessionWindow.loadURL('https://www.flipkart.com');
   return true;
 });
@@ -1150,6 +1154,7 @@ ipcMain.handle('targets:close', () => {
   paymentWindows.clear();
   upiWindows.clear();
   paymentReadyProducts.clear();
+  checkoutInFlight.clear();
   clearLanes();
   emit({ kind: 'warn', text: 'All target and payment lanes stopped' });
   return true;

@@ -919,11 +919,11 @@ export async function runCheckout(target, config, account = null, opts = {}) {
     }
 
     if (config.pmode === 'upi') {
-    const r = await payUpi(ctx, token, config.vpa, !!config.deferUpi);
-    if (r.ok && r.pending) {
-      return { headless: false, upiPending: r.pending, grandTotal, accountName: ctx.name };
-    }
-    if (r.ok) return { headless: true, orderRef: r.orderRef, grandTotal, accountName: ctx.name };
+      const r = await payUpi(ctx, token, config.vpa, !!config.deferUpi);
+      if (r.ok && r.pending) {
+        return { headless: false, upiPending: r.pending, grandTotal, accountName: ctx.name };
+      }
+      if (r.ok) return { headless: true, orderRef: r.orderRef, grandTotal, accountName: ctx.name };
       throw new Error(r.reason);
     }
 
